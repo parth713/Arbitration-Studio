@@ -6,7 +6,9 @@ import streamlit.components.v1 as components
 from arbitration_studio.config import get_settings
 from arbitration_studio.documents import make_source_documents
 from arbitration_studio.generator import generate_pleading
-from arbitration_studio.graph_rag import build_graph_index, graph_stats, render_graph_html
+from arbitration_studio.graph_rag import GraphIndex, build_graph_index, graph_stats, render_graph_html
+from arbitration_studio.mact_ontology import case_ontology_rows, enrich_case_graph
+from arbitration_studio.mact_timeline import check_compliance
 from arbitration_studio.parties import extract_party_candidates, rows_from_candidates, selected_party
 from arbitration_studio.mact_documents import (
     detect_case_type,
@@ -310,6 +312,8 @@ def render_mact(settings, has_key: bool, has_google_key: bool) -> None:
     edited = _render_editable_computation(computation)
 
     _render_gaps(documents, facts, computation)
+    _render_compliance(facts)
+    _render_ontology(index, facts, documents)
 
     st.subheader("Generate Award")
     petitioner_default = party_name(parties, "Petitioner")
@@ -379,12 +383,22 @@ def _render_extracted_facts(facts) -> None:
             ("Disability %", facts.disability_percent, "disability_percent"),
             ("Functional disability %", facts.functional_disability_percent, "functional_disability_percent"),
         ]
+    def _citation(value, key):
+        if value in (None, ""):
+            return ""
+        return facts.sources.get(key) or "⚠ no citation"
+
     rows = [
-        {"Fact": label, "Value": "—" if value in (None, "") else value, "Source": facts.sources.get(key, "")}
+        {
+            "Fact": label,
+            "Value": "—" if value in (None, "") else value,
+            "Citation (node · doc · page)": _citation(value, key),
+        }
         for label, value, key in fields
     ]
     with st.expander("Facts extracted from the record (with citations)", expanded=True):
         st.dataframe(rows, width="stretch", hide_index=True)
+        st.caption("Each citation is the graph node id + document name + page, e.g. `C7 | DAR.pdf p. 3`.")
         if facts.dependents:
             st.caption("Dependents / legal representatives")
             st.dataframe(facts.dependents, width="stretch", hide_index=True)
@@ -440,6 +454,51 @@ def _render_gaps(documents, facts, computation: Computation) -> None:
             st.markdown("**Compensation facts not on record:**")
             for gap in gaps:
                 st.markdown(f"- {gap}")
+
+
+def _render_compliance(facts) -> None:
+    report = check_compliance(facts)
+    st.subheader("Statutory Timeline & Limitation")
+    if report.accident_date is None:
+        st.info(report.limitation_note)
+        return
+
+    verdict = f"**Limitation — Section 166(3):** {report.limitation_status}. {report.limitation_note}"
+    if report.limitation_status == "Satisfied":
+        st.success(verdict)
+    elif report.limitation_status == "At risk":
+        st.error(verdict)
+    else:
+        st.warning(verdict)
+
+    st.dataframe(
+        [
+            {
+                "Form / event": item.label,
+                "Due by": item.deadline.isoformat() if item.deadline else "—",
+                "Actual": item.actual.isoformat() if item.actual else "—",
+                "Status": item.status,
+                "Note": item.note,
+            }
+            for item in report.items
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+    st.caption(f"Accident date (t₀): {report.accident_date.isoformat()}. Deadlines per Delhi HC Scheme; extensions under cl. 17.")
+
+
+def _render_ontology(index, facts, documents) -> None:
+    with st.expander("Typed case graph (ontology)", expanded=False):
+        rows = case_ontology_rows(facts)
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
+        # Enrich a copy so the base index graph is left untouched across reruns.
+        enriched = enrich_case_graph(index.graph.copy(), facts, documents)
+        html = render_graph_html(
+            GraphIndex(graph=enriched, chunks=index.chunks, documents=index.documents)
+        )
+        components.html(html, height=560, scrolling=True)
 
 
 def _next_pleading(kinds: set) -> str:

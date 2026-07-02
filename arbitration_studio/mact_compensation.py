@@ -126,6 +126,12 @@ class CaseFacts:
     num_dependents: Optional[int] = None
     dependents: List[Dict[str, object]] = field(default_factory=list)
     date_of_accident: Optional[str] = None
+    # Procedural dates for the statutory-timeline / limitation check.
+    fir_date: Optional[str] = None
+    far_date: Optional[str] = None
+    iar_date: Optional[str] = None
+    dar_date: Optional[str] = None
+    filing_date: Optional[str] = None
     vehicle_number: Optional[str] = None
     insurer: Optional[str] = None
     # Injury-specific
@@ -148,7 +154,8 @@ class CaseFacts:
 # Fields the LLM should try to read off the record.
 _EXTRACT_FIELDS = [
     "name", "age", "occupation", "employment_type", "monthly_income",
-    "marital_status", "num_dependents", "date_of_accident", "vehicle_number",
+    "marital_status", "num_dependents", "date_of_accident", "fir_date",
+    "far_date", "iar_date", "dar_date", "filing_date", "vehicle_number",
     "insurer", "nature_of_injury", "disability_percent",
     "functional_disability_percent", "treatment_months", "medical_expenses",
     "conveyance_expenses", "special_diet_expenses", "attendant_expenses",
@@ -195,8 +202,15 @@ def extract_case_facts(
                     "case record for compensation assessment. Use ONLY the provided context. "
                     "The record may be in English, Hindi (Devanagari) or Urdu (Nastaliq). "
                     "Return a single JSON object. For each field provide an object "
-                    '{"value": <value or null>, "citation": "<exact bracketed citation or empty>"}. '
-                    "Use null when the record does not state the fact — never guess. "
+                    '{"value": <value or null>, "citation": "<citation>"}. '
+                    "The citation MUST be copied verbatim from the bracketed tag that sits above the "
+                    "text you relied on. Each tag has the form 'C<n> | <filename> p. <page>' and "
+                    "identifies three things: the graph node id (C<n>), the document name, and the "
+                    "page number — e.g. 'C7 | DAR.pdf p. 3'. Whenever value is not null you MUST "
+                    "return this full citation (graph node + document + page); never shorten it, "
+                    "never invent one, and never cite a tag that is not in the context. If a value "
+                    "comes from more than one place, give the most specific tag. "
+                    "Use null (with citation '') when the record does not state the fact — never guess. "
                     "Convert any Hindi/Urdu numerals to Western digits, and read amounts written "
                     "in words (e.g. 'pandrah hazaar' / 'पंद्रह हज़ार' = 15000). "
                     "Transliterate person and place names to Roman/English script for the output "
@@ -204,7 +218,11 @@ def extract_case_facts(
                     "monthly_income in rupees per month; if only annual income is given, divide by 12. "
                     "employment_type must be 'salaried' or 'self_employed'. "
                     "num_dependents is the count of legal representatives/dependents. "
-                    "Percentages as plain numbers (e.g. 40 for 40%)."
+                    "Percentages as plain numbers (e.g. 40 for 40%). "
+                    "Dates (date_of_accident, fir_date, far_date, iar_date, dar_date, filing_date) "
+                    "as the date the document was made/filed, in DD-MM-YYYY; fir_date is the FIR date, "
+                    "far_date the First Accident Report date, dar_date the Detailed Accident Report "
+                    "filing date, filing_date the claim petition / DAR registration date."
                 ),
             },
             {
