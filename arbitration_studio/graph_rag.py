@@ -207,4 +207,6 @@ def _extract_entities(text: str) -> List[str]:
 
 
 def _normalize_terms(text: str) -> List[str]:
-    return re.findall(r"[a-z0-9]{3,}", text.lower())
+    # Unicode-aware so the no-embeddings keyword fallback also works for
+    # Hindi (Devanagari) and Urdu (Nastaliq) text, not just Latin/ASCII.
+    return re.findall(r"\w{3,}", text.lower(), flags=re.UNICODE)

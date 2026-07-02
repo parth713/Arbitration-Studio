@@ -76,10 +76,15 @@ TRANSCRIPTION RULES:
    every field label and its value (e.g. name, age, income, disability %).
    Do not drop empty fields — show them as blank cells.
 4. Numbers — income figures, percentages, dates, FIR/policy/vehicle numbers —
-   must be transcribed exactly as written. Never round or "correct" them.
-5. Transcribe Hindi / Devanagari text as it appears; do not translate.
+   must be transcribed exactly as written, in the SAME script/numerals as the
+   original (Devanagari ०-९ or Urdu ۰-۹ digits stay as-is). Never round,
+   convert, or "correct" them.
+5. The document may be in English, Hindi (Devanagari) or Urdu (Nastaliq /
+   Perso-Arabic), often mixed on the same page. Transcribe every script as it
+   appears, in reading order (Urdu runs right-to-left). Do NOT translate or
+   transliterate — reproduce the original text faithfully.
 6. Citations of statutes and sections (e.g. "u/s 279/304-A IPC",
-   "Section 166 Motor Vehicles Act"): render exactly as written.
+   "Section 166 Motor Vehicles Act", "धारा 304-ए"): render exactly as written.
 7. Handwritten annotations: prefix with [handwritten].
 8. Unreadable regions: mark [illegible] — never guess.
 
@@ -98,7 +103,9 @@ OUTPUT: clean markdown only. No preamble, no closing remark.
 
 _SIMPLE_PROMPT = (
     "Transcribe all visible text from this document image faithfully, "
-    "including every form field, number, name and date. Maintain reading "
+    "including every form field, number, name and date. The text may be in "
+    "English, Hindi or Urdu — transcribe each script as it appears, do not "
+    "translate. Keep numerals in their original script. Maintain reading "
     "order. Plain text or simple markdown only. No commentary."
 )
 

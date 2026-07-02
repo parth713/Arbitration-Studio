@@ -40,12 +40,15 @@ def generate_mact_award(
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=chat_model,
+        temperature=0,
         input=[
             {
                 "role": "system",
                 "content": (
                     "You are assisting a Motor Accident Claims Tribunal judge in India to draft a "
                     "compensation award under the Delhi High Court Scheme for Motor Accident Claims. "
+                    "The record may be in English, Hindi or Urdu; write the award in ENGLISH, "
+                    "transliterating any Hindi/Urdu names to Roman script. "
                     "Use ONLY the provided record context for facts; do not invent names, dates, FIR "
                     "numbers, vehicle or policy particulars, or medical findings. "
                     "Use the COMPUTED FIGURES table verbatim for all amounts — do not recalculate or "

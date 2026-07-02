@@ -61,15 +61,20 @@ def party_name(parties: List[MactParty], role_prefix: str) -> str:
     return ""
 
 
-_PETITIONER_LABEL = r"petitioners?|claimants?|applicants?"
-_RESPONDENT_LABEL = r"respondents?|opposite\s+part(?:y|ies)"
+# Party labels in English, Hindi (Devanagari) and Urdu (Nastaliq).
+_PETITIONER_LABEL = r"petitioners?|claimants?|applicants?|याची|प्रार्थी|दावेदार|مدعی|درخواست\s*گزار"
+_RESPONDENT_LABEL = r"respondents?|opposite\s+part(?:y|ies)|प्रतिवादी|विपक्षी|مدعا\s*علیہ|جوابدہ"
+# "Versus" in English / Hindi / Urdu. Non-Latin tokens matched directly (no \b).
+_VERSUS = r"\b(?:versus|vs\.?|v/s|v\.)\b|बनाम|वि॰|بنام|بمقابلہ"
+# Sentence separators incl. the Devanagari danda (।) and Urdu full stop (۔).
+_SEGMENT_SPLIT = r"\.\s+|।\s*|۔\s*"
 
 
 def _extract_versus(text: str) -> tuple:
     compact = re.sub(r"\s+", " ", text)
     # Anchor on the "Versus" token; the petitioner sits just before it (after any
     # case-header boilerplate) and the respondent just after it.
-    match = re.search(r"\b(?:versus|vs\.?|v/s|v\.)\b", compact, flags=re.IGNORECASE)
+    match = re.search(_VERSUS, compact, flags=re.IGNORECASE)
     if not match:
         return "", ""
     return _name_before(compact[: match.start()]), _name_after(compact[match.end():])
@@ -78,11 +83,11 @@ def _extract_versus(text: str) -> tuple:
 def _name_before(left: str) -> str:
     # Walk sentence-like segments backwards, skipping label-only fragments, and
     # take the nearest real name preceding the "Versus" token.
-    for seg in reversed(re.split(r"\.\s+", left)):
+    for seg in reversed(re.split(_SEGMENT_SPLIT, left)):
         seg = seg.strip()
         if not seg or re.fullmatch(rf"(?:the\s+)?(?:{_PETITIONER_LABEL})\.?", seg, flags=re.IGNORECASE):
             continue
-        seg = re.sub(rf"\b(?:{_PETITIONER_LABEL})\b\.?\s*$", "", seg, flags=re.IGNORECASE).strip()
+        seg = re.sub(rf"(?:{_PETITIONER_LABEL})\.?\s*$", "", seg, flags=re.IGNORECASE).strip()
         name = _trim_party(seg)
         if name:
             return name
@@ -90,22 +95,33 @@ def _name_before(left: str) -> str:
 
 
 def _name_after(right: str) -> str:
-    for seg in re.split(r"\.\s+", right):
+    for seg in re.split(_SEGMENT_SPLIT, right):
         seg = seg.strip()
         if not seg:
             continue
-        seg = re.sub(rf"\b(?:{_RESPONDENT_LABEL})\b\.?\s*$", "", seg, flags=re.IGNORECASE).strip()
+        seg = re.sub(rf"(?:{_RESPONDENT_LABEL})\.?\s*$", "", seg, flags=re.IGNORECASE).strip()
         name = _trim_party(seg)
         if name:
             return name
     return ""
 
 
+_ORS = r"&\s*(?:ors?|others)\b|and\s+others\b|व\s*अन्य|एवं\s*अन्य|और\s*अन्य|वगैरह|وغیرہ"
+
+
 def _trim_party(raw: str) -> str:
     # Keep the lead name plus an "& Ors." marker if present, drop boilerplate.
-    raw = re.split(r"\bin\s+the\s+matter\s+of\b|\bclaim\s+petition\b|\bmact\b", raw, flags=re.IGNORECASE)[-1]
-    has_ors = bool(re.search(r"&\s*(?:ors?|others)\b|and\s+others\b", raw, flags=re.IGNORECASE))
-    lead = re.split(r"&|\band\s+others\b|\bthrough\b|\bs/o\b|\bw/o\b|\bd/o\b|\br/o\b", raw, flags=re.IGNORECASE)[0]
+    raw = re.split(
+        r"\bin\s+the\s+matter\s+of\b|\bclaim\s+petition\b|\bmact\b|दावा\s*याचिका|درخواست",
+        raw,
+        flags=re.IGNORECASE,
+    )[-1]
+    has_ors = bool(re.search(_ORS, raw, flags=re.IGNORECASE))
+    lead = re.split(
+        rf"&|\band\s+others\b|\bthrough\b|\bs/o\b|\bw/o\b|\bd/o\b|\br/o\b|{_ORS}",
+        raw,
+        flags=re.IGNORECASE,
+    )[0]
     name = _clean_name(lead)
     if not name or _is_noise(name):
         return ""

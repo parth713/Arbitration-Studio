@@ -186,15 +186,21 @@ def extract_case_facts(
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=chat_model,
+        temperature=0,
         input=[
             {
                 "role": "system",
                 "content": (
                     "You extract structured facts from an Indian Motor Accident Claims Tribunal "
                     "case record for compensation assessment. Use ONLY the provided context. "
+                    "The record may be in English, Hindi (Devanagari) or Urdu (Nastaliq). "
                     "Return a single JSON object. For each field provide an object "
                     '{"value": <value or null>, "citation": "<exact bracketed citation or empty>"}. '
                     "Use null when the record does not state the fact — never guess. "
+                    "Convert any Hindi/Urdu numerals to Western digits, and read amounts written "
+                    "in words (e.g. 'pandrah hazaar' / 'पंद्रह हज़ार' = 15000). "
+                    "Transliterate person and place names to Roman/English script for the output "
+                    "values (the English award is drawn from these). "
                     "monthly_income in rupees per month; if only annual income is given, divide by 12. "
                     "employment_type must be 'salaried' or 'self_employed'. "
                     "num_dependents is the count of legal representatives/dependents. "
@@ -422,11 +428,25 @@ def _unwrap(entry):
     return entry, ""
 
 
+# Devanagari (०-९), Extended Arabic-Indic / Urdu (۰-۹) and Arabic-Indic (٠-٩)
+# digits → ASCII, so incomes/ages written in Hindi or Urdu numerals survive.
+_NUMERAL_MAP = {
+    **{ord("०") + i: str(i) for i in range(10)},  # Devanagari U+0966..U+096F
+    **{ord("۰") + i: str(i) for i in range(10)},  # Urdu       U+06F0..U+06F9
+    **{ord("٠") + i: str(i) for i in range(10)},  # Arabic     U+0660..U+0669
+}
+
+
+def normalize_numerals(text: str) -> str:
+    """Convert Devanagari / Urdu / Arabic-Indic digits to ASCII digits."""
+    return text.translate(_NUMERAL_MAP)
+
+
 def _to_number(value) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
-        cleaned = re.sub(r"[^\d.]", "", value.replace(",", ""))
+        cleaned = re.sub(r"[^\d.]", "", normalize_numerals(value).replace(",", ""))
         if cleaned and cleaned != ".":
             try:
                 return float(cleaned)

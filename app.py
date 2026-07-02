@@ -218,6 +218,9 @@ def render_mact(settings, has_key: bool, has_google_key: bool) -> None:
                 ocr_model=settings.ocr_model,
                 ocr_dpi=settings.ocr_dpi,
                 enable_ocr=enable_ocr,
+                openai_api_key=settings.openai_api_key if has_key else "",
+                chat_model=settings.chat_model,
+                enable_llm_classify=has_key,
             )
             index = build_graph_index(
                 documents,

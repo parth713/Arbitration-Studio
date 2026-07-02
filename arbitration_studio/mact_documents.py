@@ -6,7 +6,9 @@ etc.) instead of arbitration pleadings. Extraction and the heuristic-scoring
 helpers are reused from ``documents.py`` so the two domains stay consistent.
 """
 
-from typing import Dict, Iterable, List, Tuple
+import json
+import re
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from arbitration_studio.documents import (
     SourceDocument,
@@ -15,6 +17,10 @@ from arbitration_studio.documents import (
     extract_file,
 )
 from arbitration_studio.ocr import extract_pdf_pages
+
+# Below this heuristic score we ask the LLM classifier (covers Hindi/Urdu-only,
+# merged, and generically-named scans the English regex cannot score).
+LLM_FALLBACK_CONFIDENCE = 8
 
 
 # Canonical MACT document kinds the classifier can assign.
@@ -242,6 +248,63 @@ def classify_mact_document_detailed(filename: str, text: str) -> Tuple[str, int,
     return best, best_score, _evidence_text(scores, evidence, best)
 
 
+def classify_with_llm(
+    filename: str, text: str, api_key: str, chat_model: str
+) -> Optional[Tuple[str, str]]:
+    """Language-agnostic classification fallback via the LLM.
+
+    Reads the document text (English / Hindi / Urdu) and returns
+    ``(kind, language)`` where ``kind`` is one of ``MACT_KINDS`` (or
+    "Supporting Document"). Returns ``None`` if the call fails or is
+    unconfigured, so the caller keeps the heuristic result.
+    """
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+
+    allowed = MACT_KINDS + ["Supporting Document"]
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.responses.create(
+            model=chat_model,
+            temperature=0,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You classify a single document from an Indian Motor Accident Claims "
+                        "Tribunal (MACT) case file. The text may be in English, Hindi (Devanagari) "
+                        "or Urdu (Nastaliq). Choose the single best-matching document type from the "
+                        "allowed list. If none fit, use 'Supporting Document'. Return ONLY JSON: "
+                        '{"kind": "<one of the allowed types>", "language": "English|Hindi|Urdu|Mixed|Other"}.'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Allowed types: {allowed}\n\n"
+                        f"Filename: {filename}\n\n"
+                        f"Document text (may be truncated):\n{text[:6000]}"
+                    ),
+                },
+            ],
+        )
+        data = _parse_json(response.output_text)
+    except Exception:
+        return None
+
+    if not data:
+        return None
+    kind = str(data.get("kind", "")).strip()
+    language = str(data.get("language", "")).strip() or "Unknown"
+    if kind not in allowed:
+        return None
+    return kind, language
+
+
 def make_mact_source_documents(
     uploaded_files: Iterable,
     *,
@@ -249,12 +312,17 @@ def make_mact_source_documents(
     ocr_model: str = "",
     ocr_dpi: int = 300,
     enable_ocr: bool = True,
+    openai_api_key: str = "",
+    chat_model: str = "",
+    enable_llm_classify: bool = True,
 ) -> List[SourceDocument]:
     """Classify uploaded MACT files, OCR'ing scanned PDF pages via Gemini.
 
     Scanned documents (FIRs, post-mortems, DARs) carry no extractable text, so
     pages that ``pypdf`` reads as empty/garbled are transcribed with Gemini when
-    a Google API key is configured. Digital PDFs incur no OCR calls.
+    a Google API key is configured. Digital PDFs incur no OCR calls. When the
+    English heuristic is not confident (Hindi/Urdu-only, merged, or generically
+    named scans), an LLM classifier decides instead.
     """
     documents = []
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
@@ -271,6 +339,18 @@ def make_mact_source_documents(
             pages = extract_file(uploaded_file)
         text = "\n".join(page.text for page in pages)
         kind, confidence, evidence = classify_mact_document_detailed(uploaded_file.name, text)
+
+        # LLM fallback when the heuristic is weak or gives up.
+        if (
+            enable_llm_classify
+            and openai_api_key
+            and (kind == "Supporting Document" or confidence < LLM_FALLBACK_CONFIDENCE)
+        ):
+            llm_result = classify_with_llm(uploaded_file.name, text, openai_api_key, chat_model)
+            if llm_result:
+                kind, language = llm_result
+                evidence = f"[LLM classified · lang: {language}] {evidence}"
+
         if ocr_used:
             evidence = f"[Gemini OCR] {evidence}"
         documents.append(
@@ -310,8 +390,6 @@ _INJURY_TEXT = [
 
 def detect_case_type(documents: Iterable[SourceDocument]) -> Tuple[str, str]:
     """Return (case_type, evidence) where case_type is 'death', 'injury' or 'unknown'."""
-    import re
-
     death_hits: List[str] = []
     injury_hits: List[str] = []
     for doc in documents:
@@ -362,6 +440,22 @@ def missing_documents(documents: Iterable[SourceDocument], case_type: str) -> Li
     elif case_type == "injury":
         expected += _EXPECTED_INJURY
     return [kind for kind in dict.fromkeys(expected) if kind not in present]
+
+
+def _parse_json(text: str) -> Optional[dict]:
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None
+    return None
 
 
 def _evidence_text(scores: Dict[str, int], evidence: Dict[str, List[str]], selected: str) -> str:
