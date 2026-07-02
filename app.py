@@ -7,7 +7,7 @@ from arbitration_studio.config import get_settings
 from arbitration_studio.documents import make_source_documents
 from arbitration_studio.generator import generate_pleading
 from arbitration_studio.graph_rag import GraphIndex, build_graph_index, graph_stats, render_graph_html
-from arbitration_studio.mact_ontology import case_ontology_rows, enrich_case_graph
+from arbitration_studio.mact_ontology import case_ontology_json, case_ontology_rows, enrich_case_graph
 from arbitration_studio.mact_timeline import check_compliance
 from arbitration_studio.parties import extract_party_candidates, rows_from_candidates, selected_party
 from arbitration_studio.mact_documents import (
@@ -313,7 +313,7 @@ def render_mact(settings, has_key: bool, has_google_key: bool) -> None:
 
     _render_gaps(documents, facts, computation)
     _render_compliance(facts)
-    _render_ontology(index, facts, documents)
+    _render_ontology(index, facts, documents, computation)
 
     st.subheader("Generate Award")
     petitioner_default = party_name(parties, "Petitioner")
@@ -488,11 +488,19 @@ def _render_compliance(facts) -> None:
     st.caption(f"Accident date (t₀): {report.accident_date.isoformat()}. Deadlines per Delhi HC Scheme; extensions under cl. 17.")
 
 
-def _render_ontology(index, facts, documents) -> None:
+def _render_ontology(index, facts, documents, computation) -> None:
     with st.expander("Typed case graph (ontology)", expanded=False):
         rows = case_ontology_rows(facts)
+
+        st.markdown("**Extracted ontology — JSON**")
+        st.json(case_ontology_json(facts, documents, computation))
+
         if rows:
+            st.markdown("**Typed entities (with citations)**")
             st.dataframe(rows, width="stretch", hide_index=True)
+
+        st.markdown("**Typed case graph**")
+        st.caption("CASE node → documents (tagged with their statutory Form) and typed actor nodes; hover a node for its citation.")
         # Enrich a copy so the base index graph is left untouched across reruns.
         enriched = enrich_case_graph(index.graph.copy(), facts, documents)
         html = render_graph_html(

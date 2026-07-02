@@ -77,11 +77,26 @@ ENTITY_CLASSES: Dict[str, str] = {
     "Owner": "NaturalPerson",
     "Eyewitness": "NaturalPerson",
     "InvestigatingOfficer": "Organization",
+    "PoliceStation": "Organization",
     "Insurer": "Organization",
     "Hospital": "Organization",
     "Tribunal": "AdjudicatoryBody",
     "Vehicle": "Object",
 }
+
+# Ordered actor extraction map: (display Role, ontology Class, CaseFacts field).
+# The victim (Deceased/Injured) and Claimants/LRs are handled separately because
+# their role label / source depends on case_type and the dependents list.
+ACTOR_FIELDS = [
+    ("Insurer", "Organization", "insurer"),
+    ("Vehicle", "Object", "vehicle_number"),
+    ("Driver", "NaturalPerson", "driver_name"),
+    ("Owner", "NaturalPerson", "owner_name"),
+    ("Investigating Officer", "Organization", "investigating_officer"),
+    ("Police Station", "Organization", "police_station"),
+    ("Hospital", "Organization", "hospital"),
+    ("Eyewitness", "NaturalPerson", "eyewitness"),
+]
 
 # Multiplier-doctrine lineage (the reasoning backbone behind the calculator).
 PRECEDENTS: List[Dict[str, object]] = [
@@ -145,24 +160,81 @@ def enrich_case_graph(
         if doc.doc_id in graph:
             graph.add_edge(case_id, doc.doc_id, relation="record")
 
-    typed = case_ontology_rows(facts)
-    for row in typed:
-        node_id = f"ONT:{row['Role']}"
-        graph.add_node(node_id, label=f"{row['Role']}: {row['Value']}", node_type=_ROLE_COLOR_TYPE, kind=row["Class"])
+    for idx, row in enumerate(case_ontology_rows(facts)):
+        node_id = f"ONT:{row['Role']}:{idx}"
+        tooltip = f"{row['Role']}: {row['Value']}"
+        if row["Citation"]:
+            tooltip += f"  [{row['Citation']}]"
+        # render_graph_html shows `kind` as the tooltip → put the citation there.
+        graph.add_node(node_id, label=f"{row['Role']}: {row['Value']}", node_type=_ROLE_COLOR_TYPE, kind=tooltip)
         graph.add_edge(case_id, node_id, relation=row["Role"].lower())
     return graph
 
 
 def case_ontology_rows(facts: "CaseFacts") -> List[Dict[str, str]]:
-    """Typed entities extracted for the case (for the graph + a table)."""
-    victim_role = "Deceased" if facts.case_type == "death" else "Injured"
-    candidates = [
-        (victim_role, facts.name),
-        ("Insurer", facts.insurer),
-        ("Vehicle", facts.vehicle_number),
-    ]
+    """Typed entities extracted for the case, each with its citation.
+
+    Columns: Role / Class / Value / Citation (graph node · document · page).
+    """
     rows: List[Dict[str, str]] = []
-    for role, value in candidates:
+
+    def add(role: str, cls: str, value: object, citation: str = "") -> None:
         if value:
-            rows.append({"Role": role, "Class": ENTITY_CLASSES.get(role, "Thing"), "Value": str(value)})
+            rows.append({"Role": role, "Class": cls, "Value": str(value), "Citation": citation})
+
+    victim_role = "Deceased" if facts.case_type == "death" else "Injured"
+    add(victim_role, "NaturalPerson", facts.name, facts.sources.get("name", ""))
+    for dep in facts.dependents:
+        if isinstance(dep, dict) and dep.get("name"):
+            rel = dep.get("relation") or "LR"
+            add("Claimant", "NaturalPerson", f"{dep['name']} ({rel})", facts.sources.get("num_dependents", ""))
+    for role, cls, field in ACTOR_FIELDS:
+        add(role, cls, getattr(facts, field, None), facts.sources.get(field, ""))
     return rows
+
+
+def case_ontology_json(facts: "CaseFacts", documents: "List[SourceDocument]", computation=None) -> Dict[str, object]:
+    """The extracted ontology as a JSON-serialisable dict (for st.json)."""
+    payload: Dict[str, object] = {
+        "case_type": facts.case_type,
+        "entities": case_ontology_rows(facts),
+        "documents": [
+            {
+                "id": doc.doc_id,
+                "file": doc.filename,
+                "form": form_for_kind(doc.kind) or "",
+                "form_name": FORMS.get(form_for_kind(doc.kind) or "", {}).get("name", doc.kind),
+                "class": FORMS.get(form_for_kind(doc.kind) or "", {}).get("ontology_class", "Document"),
+            }
+            for doc in documents
+        ],
+    }
+    if computation is not None:
+        payload["authorities"] = authorities_applied(computation)
+    return payload
+
+
+def _precedent(name_substr: str) -> Optional[Dict[str, object]]:
+    for p in PRECEDENTS:
+        if name_substr.lower() in str(p["name"]).lower():
+            return p
+    return None
+
+
+def authorities_applied(computation) -> List[Dict[str, object]]:
+    """Precedents governing the heads present in a computation (Module 8)."""
+    text = " ".join(f"{li.label} {li.basis}".lower() for li in computation.line_items)
+    out: List[Dict[str, object]] = []
+
+    def add(name_substr: str, applied_to: str) -> None:
+        p = _precedent(name_substr)
+        if p and not any(o["citation"] == p["citation"] for o in out):
+            out.append({"authority": p["name"], "citation": p["citation"], "applied_to": applied_to, "holds": p["holds"]})
+
+    if "multiplier" in text:
+        add("Sarla Verma", "Multiplier and personal-expense deduction")
+        add("Trilok Chandra", "Maximum multiplier of 18; Second Schedule a guide only")
+        add("Reshma Kumari", "Approval of the standardised multiplier table")
+    if any(k in text for k in ("future prospects", "consortium", "estate", "funeral")):
+        add("Pranay Sethi", "Future prospects and conventional heads (estate/consortium/funeral)")
+    return out

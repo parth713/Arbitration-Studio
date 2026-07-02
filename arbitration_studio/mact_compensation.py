@@ -134,6 +134,13 @@ class CaseFacts:
     filing_date: Optional[str] = None
     vehicle_number: Optional[str] = None
     insurer: Optional[str] = None
+    # Actors (ontology Module 1)
+    driver_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    investigating_officer: Optional[str] = None
+    police_station: Optional[str] = None
+    hospital: Optional[str] = None
+    eyewitness: Optional[str] = None
     # Injury-specific
     nature_of_injury: Optional[str] = None
     disability_percent: Optional[float] = None
@@ -156,10 +163,11 @@ _EXTRACT_FIELDS = [
     "name", "age", "occupation", "employment_type", "monthly_income",
     "marital_status", "num_dependents", "date_of_accident", "fir_date",
     "far_date", "iar_date", "dar_date", "filing_date", "vehicle_number",
-    "insurer", "nature_of_injury", "disability_percent",
-    "functional_disability_percent", "treatment_months", "medical_expenses",
-    "conveyance_expenses", "special_diet_expenses", "attendant_expenses",
-    "artificial_limb_cost",
+    "insurer", "driver_name", "owner_name", "investigating_officer",
+    "police_station", "hospital", "eyewitness", "nature_of_injury",
+    "disability_percent", "functional_disability_percent", "treatment_months",
+    "medical_expenses", "conveyance_expenses", "special_diet_expenses",
+    "attendant_expenses", "artificial_limb_cost",
 ]
 _NUMERIC_FIELDS = {
     "age", "monthly_income", "num_dependents", "disability_percent",
@@ -222,7 +230,10 @@ def extract_case_facts(
                     "Dates (date_of_accident, fir_date, far_date, iar_date, dar_date, filing_date) "
                     "as the date the document was made/filed, in DD-MM-YYYY; fir_date is the FIR date, "
                     "far_date the First Accident Report date, dar_date the Detailed Accident Report "
-                    "filing date, filing_date the claim petition / DAR registration date."
+                    "filing date, filing_date the claim petition / DAR registration date. "
+                    "Actors: driver_name (driver of the offending vehicle), owner_name (registered "
+                    "owner), investigating_officer (IO name), police_station, hospital (treating "
+                    "hospital), eyewitness (name(s)) — read in any script, transliterated to Roman."
                 ),
             },
             {

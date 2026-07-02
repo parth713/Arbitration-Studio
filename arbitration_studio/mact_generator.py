@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from arbitration_studio.graph_rag import Chunk, GraphIndex, retrieve_context
 from arbitration_studio.mact_compensation import CaseFacts, Computation
+from arbitration_studio.mact_ontology import authorities_applied
 
 
 def generate_mact_award(
@@ -35,6 +36,7 @@ def generate_mact_award(
     chunks = retrieve_context(index, query, api_key=api_key, embedding_model=embedding_model, top_k=22)
     context = _format_context(chunks)
     figures = _format_figures(computation)
+    authorities = _format_authorities(computation)
     form = "Form XV (death case)" if computation.case_type == "death" else "Form XVI (injury case)"
 
     client = OpenAI(api_key=api_key)
@@ -59,7 +61,13 @@ def generate_mact_award(
                     "Write a formal, structured award: cause title, brief facts of the accident, issue "
                     "of negligence and liability, finding on income and dependency, a heads-of-compensation "
                     f"table reflecting {form}, total compensation, rate of interest, and apportionment/"
-                    "disbursement directions."
+                    "disbursement directions. "
+                    "For the compensation heads, cite the governing Supreme Court authority from the "
+                    "LEGAL AUTHORITIES list for each relevant head — e.g. the multiplier and personal-"
+                    "expense deduction to Sarla Verma, and future prospects and the conventional heads "
+                    "(loss of estate, consortium, funeral) to Pranay Sethi — using the case name and "
+                    "citation exactly as listed. These authority citations are separate from, and in "
+                    "addition to, the record citations [C.. | file p..] required for facts."
                 ),
             },
             {
@@ -70,12 +78,23 @@ def generate_mact_award(
                     f"Respondent(s): {respondent or 'Not specified'}\n"
                     f"Additional instructions: {extra_instructions or 'None'}\n\n"
                     f"COMPUTED FIGURES ({form}) — use these amounts exactly:\n{figures}\n\n"
+                    f"LEGAL AUTHORITIES — cite these for the compensation heads:\n{authorities}\n\n"
                     f"Record context:\n{context}"
                 ),
             },
         ],
     )
     return {"draft": response.output_text, "chunks": chunks}
+
+
+def _format_authorities(computation: Computation) -> str:
+    authorities = authorities_applied(computation)
+    if not authorities:
+        return "None applicable."
+    return "\n".join(
+        f"- {a['authority']}, {a['citation']} — for {a['applied_to']} ({a['holds']})"
+        for a in authorities
+    )
 
 
 def _format_figures(computation: Computation) -> str:
