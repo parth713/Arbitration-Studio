@@ -25,6 +25,7 @@ evolves, and every computed figure is surfaced to the judge for override.
 """
 
 from dataclasses import dataclass, field
+from datetime import date
 from fractions import Fraction
 import json
 import re
@@ -89,12 +90,19 @@ def future_prospects_rate(age: Optional[float], employment_type: Optional[str]) 
 
 
 def personal_expense_fraction(
-    num_dependents: Optional[int], marital_status: Optional[str]
+    num_dependents: Optional[int],
+    marital_status: Optional[str],
+    bachelor_with_dependent_family: bool = False,
 ) -> Optional[Fraction]:
-    """Sarla Verma deduction for the deceased's personal/living expenses."""
+    """Sarla Verma deduction for the deceased's personal/living expenses.
+
+    Bachelor: normally 1/2, but 1/3 in the recognised exception where the
+    deceased supported a widowed mother and younger non-earning siblings.
+    Married: 1/3 (2-3 dependants), 1/4 (4-6), 1/5 (>6).
+    """
     status = (marital_status or "").lower()
     if status.startswith("unmarr") or status in {"bachelor", "single", "spinster"}:
-        return Fraction(1, 2)
+        return Fraction(1, 3) if bachelor_with_dependent_family else Fraction(1, 2)
     if num_dependents is None:
         return None
     if num_dependents <= 3:  # 2-3 members of the family
@@ -102,6 +110,30 @@ def personal_expense_fraction(
     if num_dependents <= 6:  # 4-6 members
         return Fraction(1, 4)
     return Fraction(1, 5)  # > 6 members
+
+
+def _accident_year(facts: "CaseFacts") -> Optional[int]:
+    """The year of the accident (drives conventional-head escalation)."""
+    for value in (facts.date_of_accident, facts.filing_date, facts.dar_date, facts.fir_date):
+        if not value:
+            continue
+        years = re.findall(r"(?:19|20)\d{2}", normalize_numerals(str(value)))
+        if years:
+            return int(years[-1])
+    return None
+
+
+def _bachelor_family_exception(facts: "CaseFacts") -> bool:
+    """True where a bachelor deceased supported a widowed mother + siblings."""
+    status = (facts.marital_status or "").lower()
+    if not (status.startswith("unmarr") or status in {"bachelor", "single", "spinster"}):
+        return False
+    relations = " ".join(
+        (d.get("relation") or "").lower() for d in facts.dependents if isinstance(d, dict)
+    )
+    has_mother = "mother" in relations
+    has_sibling = any(term in relations for term in ("brother", "sister", "sibling"))
+    return has_mother and has_sibling
 
 
 def conventional_heads(award_year: int = 2024) -> Dict[str, float]:
@@ -304,10 +336,16 @@ class Computation:
     missing_fields: List[str]
 
 
-def compute_death_award(facts: CaseFacts, award_year: int = 2024) -> Computation:
+def compute_death_award(facts: CaseFacts, award_year: Optional[int] = None) -> Computation:
     items: List[LineItem] = []
     missing: List[str] = []
-    heads = conventional_heads(award_year)
+
+    # Conventional heads escalate with the ACCIDENT year, not a fixed year.
+    year = award_year or _accident_year(facts)
+    if year is None:
+        year = date.today().year
+        missing.append("date of accident (year drives conventional heads)")
+    heads = conventional_heads(year)
 
     income = facts.monthly_income
     if income is None:
@@ -317,7 +355,8 @@ def compute_death_award(facts: CaseFacts, award_year: int = 2024) -> Computation
         missing.append("age")
 
     fp_rate = future_prospects_rate(age, facts.employment_type)
-    pe_fraction = personal_expense_fraction(facts.num_dependents, facts.marital_status)
+    bachelor_exception = _bachelor_family_exception(facts)
+    pe_fraction = personal_expense_fraction(facts.num_dependents, facts.marital_status, bachelor_exception)
     if pe_fraction is None:
         missing.append("num_dependents/marital_status")
     multiplier = multiplier_for_age(age)
@@ -337,9 +376,15 @@ def compute_death_award(facts: CaseFacts, award_year: int = 2024) -> Computation
     items.append(LineItem(
         "Add: Future prospects (B)", round(B) if income else None,
         f"{int(fp_rate*100)}% (Pranay Sethi, age {age}, {emp})", False, in_total=False))
+    pe_basis = f"deduction {pe_fraction if pe_fraction else '?'} (Sarla Verma"
+    status = (facts.marital_status or "").lower()
+    if status.startswith("unmarr") or status in {"bachelor", "single", "spinster"}:
+        pe_basis += ", bachelor exception 1/3" if bachelor_exception else ", bachelor 1/2"
+    else:
+        pe_basis += f", {facts.num_dependents} dependents"
+    pe_basis += ")"
     items.append(LineItem(
-        "Less: Personal expenses (C)", round(C) if income else None,
-        f"deduction {pe_fraction if pe_fraction else '?'} (Sarla Verma, {facts.num_dependents} dependents)", False, in_total=False))
+        "Less: Personal expenses (C)", round(C) if income else None, pe_basis, False, in_total=False))
     items.append(LineItem("Monthly loss of dependency (D = A+B−C)", round(D) if income else None, "computed", False, in_total=False))
     items.append(LineItem("Annual loss of dependency (D×12)", round(annual) if income else None, "computed", False, in_total=False))
     items.append(LineItem("Multiplier (E)", E or None, f"Sarla Verma, age {age}", False, in_total=False))
@@ -349,21 +394,23 @@ def compute_death_award(facts: CaseFacts, award_year: int = 2024) -> Computation
     H = heads["consortium_per_claimant"] * consortium_claimants
     items.append(LineItem(
         "Loss of consortium (H)", H,
-        f"{consortium_claimants} × ₹{heads['consortium_per_claimant']:,} (Pranay Sethi, {award_year})", True, in_total=True))
+        f"{consortium_claimants} × ₹{heads['consortium_per_claimant']:,} (Pranay Sethi, accident year {year})", True, in_total=True))
     items.append(LineItem(
         "Loss of love and affection (I)", 0,
         "No separate award (Magma General v. Nanu Ram); adjust if tribunal differs", True, in_total=True))
     items.append(LineItem(
         "Loss of estate (J)", heads["loss_of_estate"],
-        f"₹{heads['loss_of_estate']:,} (Pranay Sethi, {award_year})", True, in_total=True))
+        f"₹{heads['loss_of_estate']:,} (Pranay Sethi, accident year {year})", True, in_total=True))
     items.append(LineItem(
         "Funeral expenses (K)", heads["funeral_expenses"],
-        f"₹{heads['funeral_expenses']:,} (Pranay Sethi, {award_year})", True, in_total=True))
+        f"₹{heads['funeral_expenses']:,} (Pranay Sethi, accident year {year})", True, in_total=True))
 
     total = _sum_items(items)
     summary = {
+        "accident_year": year,
         "future_prospects_rate": fp_rate,
         "personal_expense_fraction": str(pe_fraction) if pe_fraction else None,
+        "bachelor_exception_applied": bachelor_exception,
         "multiplier": E,
         "total_loss_of_dependency": round(F) if income else None,
     }
