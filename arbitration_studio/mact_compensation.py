@@ -129,7 +129,9 @@ def _bachelor_family_exception(facts: "CaseFacts") -> bool:
     if not (status.startswith("unmarr") or status in {"bachelor", "single", "spinster"}):
         return False
     relations = " ".join(
-        (d.get("relation") or "").lower() for d in facts.dependents if isinstance(d, dict)
+        str(_plain(d.get("relation")) or "").lower()
+        for d in facts.dependents
+        if isinstance(d, dict)
     )
     has_mother = "mother" in relations
     has_sibling = any(term in relations for term in ("brother", "sister", "sibling"))
@@ -309,9 +311,20 @@ def _apply_extraction(facts: CaseFacts, output_text: str) -> None:
     if isinstance(deps, dict):
         deps = deps.get("value")
     if isinstance(deps, list):
-        facts.dependents = [d for d in deps if isinstance(d, dict)]
+        # Each dependent's fields may themselves come back as {value, citation}
+        # objects — flatten to plain scalars so downstream string ops are safe.
+        facts.dependents = [
+            {k: _plain(v) for k, v in d.items()} for d in deps if isinstance(d, dict)
+        ]
         if facts.num_dependents is None and facts.dependents:
             facts.num_dependents = len(facts.dependents)
+
+
+def _plain(value):
+    """Unwrap a {'value': ..., 'citation': ...} object to its scalar value."""
+    if isinstance(value, dict) and "value" in value:
+        return value["value"]
+    return value
 
 
 # --------------------------------------------------------------------------- #

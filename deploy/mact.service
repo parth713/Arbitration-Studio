@@ -1,0 +1,27 @@
+# systemd unit for the standalone MACT Compensation Studio.
+# Install: sudo cp deploy/mact.service /etc/systemd/system/mact.service
+#          sudo systemctl daemon-reload && sudo systemctl enable --now mact
+# Adjust User and the /opt/arbitration-studio paths to match your box.
+
+[Unit]
+Description=MACT Compensation Studio (Streamlit)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/arbitration-studio
+# Secrets are read from /opt/arbitration-studio/.env by python-dotenv.
+ExecStart=/opt/arbitration-studio/.venv/bin/streamlit run mact_app.py \
+    --server.port 8501 --server.address 127.0.0.1 --server.headless true \
+    --server.enableCORS false --server.fileWatcherType none
+# If the page loads but never connects behind nginx, also add:
+#   --server.enableXsrfProtection false
+Restart=always
+RestartSec=5
+# Give OCR/embedding room; raise if you process large scanned bundles.
+MemoryHigh=2G
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

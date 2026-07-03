@@ -1,0 +1,10 @@
+# Universal Streamlit config — safe for local dev, Streamlit Cloud, and the
+# self-hosted (nginx) deployment. Host/port/proxy settings are NOT set here so
+# they don't conflict with Streamlit Cloud; those are passed as CLI flags in the
+# systemd service for the self-hosted box (see deploy/mact.service).
+
+[server]
+maxUploadSize = 50          # MB per upload (keep <= nginx client_max_body_size)
+
+[browser]
+gatherUsageStats = false
